@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Caregiver App — Synergy Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 700px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+    h1 { font-size: 1.6rem; }
+
+    /* ============================================================
+       Alert Banner — Dehydration Risk
+       ============================================================ */
+    #alert-banner {
+      display: none;
+      background: #d32f2f;
+      color: #fff;
+      font-size: 2rem;
+      font-weight: bold;
+      text-align: center;
+      padding: 24px;
+      border-radius: 10px;
+      margin: 20px 0;
+      animation: pulse-alert 1s ease-in-out infinite alternate;
+    }
+    @keyframes pulse-alert {
+      from { opacity: 1; }
+      to { opacity: 0.7; }
+    }
+
+    /* ============================================================
+       User-Related Alerts (Requested 4 alerts)
+       ============================================================ */
+    .user-alert {
+      display: none; /* hidden by default, shown when issue occurs */
+      color: #fff;
+      font-size: 1.3rem;
+      font-weight: bold;
+      text-align: center;
+      padding: 16px 20px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    /* 1. App not responding / refresh alert */
+    #alert-app-not-responding {
+      background: #d32f2f; /* Red */
+      border: 2px dashed #fff;
+    }
+    #refresh-link {
+      color: #fff;
+      text-decoration: underline;
+      cursor: pointer;
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 1.1rem;
+    }
+
+    /* 2. No signal from wristband alert */
+    #alert-no-signal {
+      background: #e65100; /* Dark Orange */
+      animation: pulse-alert 1.5s ease-in-out infinite alternate;
+    }
+
+    /* 3. Low battery alert */
+    #alert-low-battery {
+      background: #ff9100; /* Orange/Yellow */
+      color: #111;
+    }
+
+    /* 4. Wristband is off */
+    #alert-wristband-off {
+      background: #37474f; /* Charcoal Grey */
+    }
+
+    .readings-panel {
+      background: #f5f5f5;
+      padding: 20px 24px;
+      border-radius: 10px;
+      margin: 16px 0;
+      font-size: 1.2rem;
+      line-height: 2.0;
+      border: 1px solid #ddd;
+    }
+    .readings-panel strong { font-size: 1.35rem; }
+    .reading-row { display: flex; justify-content: space-between; border-bottom: 1px dashed #ddd; padding: 4px 0; }
+    .reading-row:last-child { border-bottom: none; }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 16px 0;
+      font-size: 0.95rem;
+      color: #555;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #aaa;
+    }
+    .status-dot.connected { background: #388e3c; }
+    .status-dot.error { background: #d32f2f; }
+
+    #error-box {
+      display: none;
+      background: #ffcdd2;
+      color: #b71c1c;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 16px;
+    }
+
+    .label { color: #777; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+  <h1>🏥 Caregiver Dashboard</h1>
+
+  <!-- Database Connection status indicator -->
+  <div class="status-bar">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">Connecting to Firebase...</span>
+  </div>
+
+  <!-- Dehydration/Risk Alert -->
+  <div id="alert-banner">
+    🚨 HIGH RISK CONDITION DETECTED 🚨<br>
+    <span style="font-size: 1.2rem;">Patient metrics exceed safe environmental thresholds!</span>
+  </div>
+
+  <!-- ============================================================
+       User-Related Banners
+       ============================================================ */ -->
+  
+  <!-- 1. App Not Responding / Refresh Alert -->
+  <div class="user-alert" id="alert-app-not-responding">
+    ⚠️ Patient App is Not Responding!<br>
+    <span style="font-size: 1rem; font-weight: normal;">No telemetry received for over 30 seconds.</span><br>
+    <a id="refresh-link" onclick="window.location.reload();">🔄 Click here to refresh Caregiver Dashboard</a>
+  </div>
+
+  <!-- 2. No Signal from Wristband Alert -->
+  <div class="user-alert" id="alert-no-signal">
+    📡 No Signal from Wristband!<br>
+    <span style="font-size: 1rem; font-weight: normal;">No data received for 15+ seconds. The watch may be dead, out of range, or disconnected.</span>
+  </div>
+
+  <!-- 3. Low Battery Alert -->
+  <div class="user-alert" id="alert-low-battery">
+    🔋 Low Battery Alert!<br>
+    <span style="font-size: 1rem; font-weight: normal;">Wristband battery is at <span id="battery-level-text">—</span>%. Please charge the device.</span>
+  </div>
+
+  <!-- 4. Wristband is Off -->
+  <div class="user-alert" id="alert-wristband-off">
+    ⌚ Wristband is Off!<br>
+    <span style="font-size: 1rem; font-weight: normal;">The wristband is disconnected or has been removed from the patient's wrist.</span>
+  </div>
+
+  <!-- Live readings display -->
+  <div class="readings-panel">
+    <div class="reading-row">
+      <span>⚡ EDA (Electrodermal Activity):</span>
+      <span><strong id="eda-value">—</strong> µS</span>
+    </div>
+    <div class="reading-row">
+      <span>💓 BVM (Blood Volume Monitor):</span>
+      <span><strong id="bvm-value">—</strong></span>
+    </div>
+    <div class="reading-row">
+      <span>🏠 Room Temperature:</span>
+      <span><strong id="room-temp-value">—</strong> °C</span>
+    </div>
+    <div class="reading-row">
+      <span>💧 Room Humidity:</span>
+      <span><strong id="room-humidity-value">—</strong> %</span>
+    </div>
+    <div class="reading-row">
+      <span>🌡️ Env' Temperature:</span>
+      <span><strong id="env-temp-value">—</strong> °C</span>
+    </div>
+    <div class="reading-row">
+      <span>☁️ Env' Humidity:</span>
+      <span><strong id="env-humidity-value">—</strong> %</span>
+    </div>
+    
+    <div style="margin-top: 15px; border-top: 1px solid #ccc; padding-top: 10px;">
+      <div class="reading-row">
+        <span>⚠️ Alert Status:</span>
+        <span><strong id="alert-value">—</strong></span>
+      </div>
+      <div class="reading-row">
+        <span>🔋 Battery Status:</span>
+        <span><strong id="battery-value">—</strong></span>
+      </div>
+      <div class="reading-row">
+        <span>⌚ Wristband:</span>
+        <span><strong id="wristband-value">—</strong></span>
+      </div>
+    </div>
+    <div class="label" style="margin-top: 10px;">Last updated: <span id="last-updated">Waiting for data…</span></div>
+  </div>
+
+  <!-- Error box for Firebase failures -->
+  <div id="error-box"></div>
+
+  <!-- Firebase v8 compat SDK loaded via CDN script tags -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    // ============================================================
+    // Firebase Configuration — identical to the Patient App
+    // ============================================================
+    var firebaseConfig = {
+      apiKey: "AIzaSyAxDLMBsWXtQFKNKLA9Hu7l5xPHjXS-xV8",
+      authDomain: "synergy-demo-9a067.firebaseapp.com",
+      databaseURL: "https://synergy-demo-9a067-default-rtdb.firebaseio.com",
+      projectId: "synergy-demo-9a067",
+      storageBucket: "synergy-demo-9a067.firebasestorage.app",
+      messagingSenderId: "352728995285",
+      appId: "1:352728995285:web:d9142f69ad1875fce9595c",
+      measurementId: "G-LYGGHTJQ5J"
+    };
+
+    // Initialize Firebase (v8-style)
+    firebase.initializeApp(firebaseConfig);
+
+    // Get a reference to the Realtime Database
+    var db = firebase.database();
+
+    // Reference to the single patient's data node
+    var patientRef = db.ref("patients/patient1");
+
+    // ============================================================
+    // DOM Elements
+    // ============================================================
+    var edaEl = document.getElementById("eda-value");
+    var bvmEl = document.getElementById("bvm-value");
+    var roomTempEl = document.getElementById("room-temp-value");
+    var roomHumidityEl = document.getElementById("room-humidity-value");
+    var envTempEl = document.getElementById("env-temp-value");
+    var envHumidityEl = document.getElementById("env-humidity-value");
+    var alertEl = document.getElementById("alert-value");
+    var lastUpdatedEl = document.getElementById("last-updated");
+    var alertBanner = document.getElementById("alert-banner");
+    var statusDot = document.getElementById("status-dot");
+    var statusText = document.getElementById("status-text");
+    var errorBox = document.getElementById("error-box");
+    
+    var batteryValueEl = document.getElementById("battery-value");
+    var wristbandValueEl = document.getElementById("wristband-value");
+    var batteryLevelTextEl = document.getElementById("battery-level-text");
+
+    // User alert banner elements
+    var alertAppNotResponding = document.getElementById("alert-app-not-responding");
+    var alertNoSignal = document.getElementById("alert-no-signal");
+    var alertLowBattery = document.getElementById("alert-low-battery");
+    var alertWristbandOff = document.getElementById("alert-wristband-off");
+
+    // ============================================================
+    // Timing & Stale Data Logic
+    // ============================================================
+    var lastReceivedTimestamp = null;
+    var checkInterval = null;
+
+    checkInterval = setInterval(function () {
+      if (!lastReceivedTimestamp) return;
+
+      var ageSeconds = (Date.now() - lastReceivedTimestamp) / 1000;
+
+      // 1. App not responding (stale for 30+ seconds)
+      if (ageSeconds > 30) {
+        alertAppNotResponding.style.display = "block";
+        alertNoSignal.style.display = "none";
+      } 
+      // 2. No signal from wristband alert (stale for 15-30 seconds)
+      else if (ageSeconds > 15) {
+        alertNoSignal.style.display = "block";
+        alertAppNotResponding.style.display = "none";
+      } 
+      else {
+        alertNoSignal.style.display = "none";
+        alertAppNotResponding.style.display = "none";
+      }
+    }, 2000);
+
+    // ============================================================
+    // Show Error
+    // ============================================================
+    function showError(message) {
+      errorBox.textContent = "⚠️ Error: " + message;
+      errorBox.style.display = "block";
+      statusDot.className = "status-dot error";
+      statusText.textContent = "Connection error";
+    }
+
+    // ============================================================
+    // Real-time Database Listener
+    // ============================================================
+    patientRef.on("value",
+      function (snapshot) {
+        var data = snapshot.val();
+
+        if (!data) {
+          edaEl.textContent = "—";
+          bvmEl.textContent = "—";
+          roomTempEl.textContent = "—";
+          roomHumidityEl.textContent = "—";
+          envTempEl.textContent = "—";
+          envHumidityEl.textContent = "—";
+          alertEl.textContent = "Waiting for patient data…";
+          alertBanner.style.display = "none";
+          lastUpdatedEl.textContent = "No data received yet";
+          batteryValueEl.textContent = "—";
+          wristbandValueEl.textContent = "—";
+          return;
+        }
+
+        statusDot.className = "status-dot connected";
+        statusText.textContent = "Connected — receiving live data";
+        errorBox.style.display = "none";
+
+        if (data.lastUpdated) {
+          lastReceivedTimestamp = data.lastUpdated;
+        }
+
+        // Display parameters
+        edaEl.textContent = (typeof data.eda === "number") ? data.eda.toFixed(1) : "—";
+        bvmEl.textContent = (typeof data.bvm === "number") ? data.bvm : "—";
+        roomTempEl.textContent = (typeof data.roomTemp === "number") ? data.roomTemp.toFixed(1) : "—";
+        roomHumidityEl.textContent = (typeof data.roomHumidity === "number") ? data.roomHumidity : "—";
+        envTempEl.textContent = (typeof data.envTemp === "number") ? data.envTemp.toFixed(1) : "—";
+        envHumidityEl.textContent = (typeof data.envHumidity === "number") ? data.envHumidity : "—";
+
+        if (data.lastUpdated) {
+          var d = new Date(data.lastUpdated);
+          lastUpdatedEl.textContent = d.toLocaleTimeString();
+        }
+
+        // Risk alert logic
+        if (data.alert === true) {
+          alertBanner.style.display = "block";
+          alertEl.textContent = "⚠️ YES — HIGH RISK";
+          alertEl.style.color = "#d32f2f";
+        } else {
+          alertBanner.style.display = "none";
+          alertEl.textContent = "✅ Normal";
+          alertEl.style.color = "#388e3c";
+        }
+
+        // 3. Low battery alert (battery ≤ 20%)
+        if (typeof data.batteryLevel === "number") {
+          batteryValueEl.textContent = data.batteryLevel + "%";
+          
+          if (data.batteryLevel <= 20) {
+            alertLowBattery.style.display = "block";
+            batteryLevelTextEl.textContent = data.batteryLevel;
+            batteryValueEl.style.color = "#e65100";
+          } else {
+            alertLowBattery.style.display = "none";
+            batteryValueEl.style.color = "#388e3c";
+          }
+        } else {
+          batteryValueEl.textContent = "—";
+          alertLowBattery.style.display = "none";
+        }
+
+        // 4. Wristband is off
+        if (data.watchConnected === false) {
+          alertWristbandOff.style.display = "block";
+          wristbandValueEl.textContent = "❌ Off Wrist / Disconnected";
+          wristbandValueEl.style.color = "#d32f2f";
+        } else {
+          alertWristbandOff.style.display = "none";
+          wristbandValueEl.textContent = "✅ Connected";
+          wristbandValueEl.style.color = "#388e3c";
+        }
+      },
+      function (error) {
+        showError("Failed to read data: " + error.message);
+      }
+    );
+
+    // Connection indicator
+    db.ref(".info/connected").on("value", function (snap) {
+      if (snap.val() === true) {
+        statusDot.className = "status-dot connected";
+        statusText.textContent = "Connected — receiving live data";
+      } else {
+        statusDot.className = "status-dot";
+        statusText.textContent = "Disconnected — attempting to reconnect…";
+      }
+    });
+  </script>
+</body>
+</html>

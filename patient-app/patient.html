@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patient App — Synergy Demo</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 480px;
+      margin: 20px auto;
+      padding: 0 16px;
+    }
+    h1 { font-size: 1.4rem; }
+    .readings { font-size: 1.1rem; margin: 16px 0; line-height: 1.8; }
+    .reading-item { margin-bottom: 8px; }
+    .alert-on { color: #d32f2f; font-weight: bold; }
+    .alert-off { color: #388e3c; }
+    #force-alert-btn {
+      background: #d32f2f;
+      color: #fff;
+      border: none;
+      padding: 12px 24px;
+      font-size: 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 8px;
+      width: 100%;
+    }
+    #force-alert-btn:active { opacity: 0.7; }
+
+    /* Device simulation controls */
+    .demo-controls {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #ddd;
+    }
+    .demo-controls h3 {
+      font-size: 0.95rem;
+      color: #555;
+      margin-bottom: 10px;
+    }
+    .demo-btn-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .demo-btn {
+      border: none;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #fff;
+      text-align: left;
+    }
+    .demo-btn:active { opacity: 0.7; }
+    #toggle-wristband-btn {
+      background: #f57c00;
+    }
+    #toggle-wristband-btn.off {
+      background: #999;
+    }
+    #drain-battery-btn {
+      background: #7b1fa2;
+    }
+    #reset-battery-btn {
+      background: #388e3c;
+    }
+    #crash-app-btn {
+      background: #b71c1c;
+    }
+
+    /* Device status display */
+    .device-status {
+      margin-top: 12px;
+      font-size: 0.95rem;
+      line-height: 1.8;
+      padding: 12px 16px;
+      background: #f9f9f9;
+      border-radius: 8px;
+      border: 1px solid #eee;
+    }
+    .battery-low { color: #d32f2f; font-weight: bold; }
+    .battery-ok { color: #388e3c; }
+    .wristband-off { color: #d32f2f; font-weight: bold; }
+    .wristband-on { color: #388e3c; }
+    .app-status-frozen { color: #b71c1c; font-weight: bold; }
+
+    #error-box {
+      display: none;
+      background: #ffcdd2;
+      color: #b71c1c;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 16px;
+    }
+    .label { color: #555; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+
+  <h1>🩺 Patient App</h1>
+  <p class="label">Simulated sensor data — auto-updates every 3 seconds</p>
+
+  <div class="readings">
+    <div class="reading-item">⚡ EDA (Electrodermal Activity): <strong id="eda-value">—</strong> µS</div>
+    <div class="reading-item">💓 BVM (Blood Volume Monitor): <strong id="bvm-value">—</strong></div>
+    <div class="reading-item">🏠 Room Temperature: <strong id="room-temp-value">—</strong> °C</div>
+    <div class="reading-item">💧 Room Humidity: <strong id="room-humidity-value">—</strong> %</div>
+    <div class="reading-item">🌡️ Env' Temperature: <strong id="env-temp-value">—</strong> °C</div>
+    <div class="reading-item">☁️ Env' Humidity: <strong id="env-humidity-value">—</strong> %</div>
+    <div class="reading-item" style="margin-top: 12px;">⚠️ Alert Status: <span id="alert-value">—</span></div>
+    <div class="label">Last updated: <span id="last-updated">—</span></div>
+  </div>
+
+  <!-- Device status: battery + wristband connectivity -->
+  <div class="device-status">
+    <div>🔋 Battery: <span id="battery-value">100%</span></div>
+    <div>⌚ Wristband: <span id="wristband-status">Connected</span></div>
+    <div id="app-status-row" style="display:none;">📱 App Status: <span class="app-status-frozen">CRASHED (Not Responding)</span></div>
+  </div>
+
+  <!-- Force Alert button: writes alert:true directly, bypassing threshold logic -->
+  <button id="force-alert-btn">🚨 Force Alert (Demo)</button>
+
+  <!-- Demo controls for simulating device issues -->
+  <div class="demo-controls">
+    <h3>🎛️ Demo Controls — Simulate Device & User Issues</h3>
+    <div class="demo-btn-row">
+      <button class="demo-btn" id="toggle-wristband-btn">⌚ Disconnect Wristband (Wristband is off)</button>
+      <button class="demo-btn" id="drain-battery-btn">🔋 Drain Battery to 5% (Low Battery)</button>
+      <button class="demo-btn" id="reset-battery-btn">🔌 Recharge Battery</button>
+      <button class="demo-btn" id="crash-app-btn">💥 Simulate Patient App Crash (App Not Responding)</button>
+    </div>
+  </div>
+
+  <!-- Error box: shown when Firebase operations fail -->
+  <div id="error-box"></div>
+
+  <!-- Firebase v8 compat SDK loaded via CDN script tags -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <script>
+    // ============================================================
+    // Firebase Configuration — shared between both apps
+    // ============================================================
+    var firebaseConfig = {
+      apiKey: "AIzaSyAxDLMBsWXtQFKNKLA9Hu7l5xPHjXS-xV8",
+      authDomain: "synergy-demo-9a067.firebaseapp.com",
+      databaseURL: "https://synergy-demo-9a067-default-rtdb.firebaseio.com",
+      projectId: "synergy-demo-9a067",
+      storageBucket: "synergy-demo-9a067.firebasestorage.app",
+      messagingSenderId: "352728995285",
+      appId: "1:352728995285:web:d9142f69ad1875fce9595c",
+      measurementId: "G-LYGGHTJQ5J"
+    };
+
+    // Initialize Firebase (v8-style)
+    firebase.initializeApp(firebaseConfig);
+
+    // Get a reference to the Realtime Database
+    var db = firebase.database();
+
+    // Reference to the single patient's data node
+    var patientRef = db.ref("patients/patient1");
+
+    // ============================================================
+    // DOM Elements
+    // ============================================================
+    var edaEl = document.getElementById("eda-value");
+    var bvmEl = document.getElementById("bvm-value");
+    var roomTempEl = document.getElementById("room-temp-value");
+    var roomHumidityEl = document.getElementById("room-humidity-value");
+    var envTempEl = document.getElementById("env-temp-value");
+    var envHumidityEl = document.getElementById("env-humidity-value");
+    var alertEl = document.getElementById("alert-value");
+    var lastUpdatedEl = document.getElementById("last-updated");
+    var errorBox = document.getElementById("error-box");
+    var forceAlertBtn = document.getElementById("force-alert-btn");
+    var batteryEl = document.getElementById("battery-value");
+    var wristbandStatusEl = document.getElementById("wristband-status");
+    var toggleWristbandBtn = document.getElementById("toggle-wristband-btn");
+    var drainBatteryBtn = document.getElementById("drain-battery-btn");
+    var resetBatteryBtn = document.getElementById("reset-battery-btn");
+    var crashAppBtn = document.getElementById("crash-app-btn");
+    var appStatusRow = document.getElementById("app-status-row");
+
+    // ============================================================
+    // Simulation State
+    // ============================================================
+    var currentEda = 2.5;         // µS (Typical range 1.0 - 10.0)
+    var currentBvm = 75;          // Heart-rate metric (Typical range 60 - 120)
+    var currentRoomTemp = 22.5;   // °C
+    var currentRoomHumidity = 45; // %
+    var currentEnvTemp = 24.0;    // °C
+    var currentEnvHumidity = 50;  // %
+
+    var forceAlertActive = false;
+    var batteryLevel = 100;
+    var wristbandConnected = true;
+    var appCrashed = false;
+    var tickIntervalId = null;
+
+    // ============================================================
+    // Show Error
+    // ============================================================
+    function showError(message) {
+      errorBox.textContent = "⚠️ Error: " + message;
+      errorBox.style.display = "block";
+    }
+
+    function clearError() {
+      errorBox.style.display = "none";
+    }
+
+    // ============================================================
+    // Simulate Sensor Readings
+    // ============================================================
+    function simulateReadings() {
+      // EDA: fluctuates slowly, occasionally spikes on stress/heat
+      var edaDelta = (Math.random() - 0.48) * 0.2;
+      if (Math.random() < 0.05) edaDelta = (Math.random() - 0.2) * 4.0; // stress spike
+      currentEda = Math.round((currentEda + edaDelta) * 10) / 10;
+      currentEda = Math.max(0.5, Math.min(15.0, currentEda));
+
+      // BVM (simulated blood volume heart rate equivalent)
+      var bvmDelta = Math.round((Math.random() - 0.48) * 4);
+      if (Math.random() < 0.08) bvmDelta = Math.round((Math.random() - 0.3) * 20); // physical exertion spike
+      currentBvm = currentBvm + bvmDelta;
+      currentBvm = Math.max(50, Math.min(150, currentBvm));
+
+      // Room Temp
+      var rtDelta = (Math.random() - 0.5) * 0.1;
+      currentRoomTemp = Math.round((currentRoomTemp + rtDelta) * 10) / 10;
+      currentRoomTemp = Math.max(18.0, Math.min(28.0, currentRoomTemp));
+
+      // Room Humidity
+      var rhDelta = Math.round((Math.random() - 0.5) * 1);
+      currentRoomHumidity = currentRoomHumidity + rhDelta;
+      currentRoomHumidity = Math.max(30, Math.min(70, currentRoomHumidity));
+
+      // Environmental Temp
+      var etDelta = (Math.random() - 0.45) * 0.3;
+      if (Math.random() < 0.05) etDelta = 3.0; // extreme heat event
+      currentEnvTemp = Math.round((currentEnvTemp + etDelta) * 10) / 10;
+      currentEnvTemp = Math.max(15.0, Math.min(42.0, currentEnvTemp));
+
+      // Environmental Humidity
+      var ehDelta = Math.round((Math.random() - 0.5) * 2);
+      currentEnvHumidity = currentEnvHumidity + ehDelta;
+      currentEnvHumidity = Math.max(20, Math.min(95, currentEnvHumidity));
+
+      return {
+        eda: currentEda,
+        bvm: currentBvm,
+        roomTemp: currentRoomTemp,
+        roomHumidity: currentRoomHumidity,
+        envTemp: currentEnvTemp,
+        envHumidity: currentEnvHumidity
+      };
+    }
+
+    // ============================================================
+    // Simulate Battery Drain
+    // ============================================================
+    function simulateBattery() {
+      if (batteryLevel > 0) {
+        batteryLevel = Math.max(0, batteryLevel - (Math.random() * 0.3 + 0.2));
+        batteryLevel = Math.round(batteryLevel * 10) / 10;
+      }
+    }
+
+    // ============================================================
+    // Threshold Logic
+    // Alert triggers if Env Temp > 38.0°C OR EDA > 9.0 µS
+    // ============================================================
+    function checkAlert(eda, envTemp) {
+      return envTemp > 38.0 || eda > 9.0;
+    }
+
+    // ============================================================
+    // Write Data to Firebase
+    // ============================================================
+    function writeToFirebase(readings, alertFlag) {
+      if (appCrashed) return;
+
+      var data = {
+        eda: readings.eda,
+        bvm: readings.bvm,
+        roomTemp: readings.roomTemp,
+        roomHumidity: readings.roomHumidity,
+        envTemp: readings.envTemp,
+        envHumidity: readings.envHumidity,
+        alert: alertFlag,
+        batteryLevel: Math.round(batteryLevel),
+        watchConnected: wristbandConnected,
+        lastUpdated: firebase.database.ServerValue.TIMESTAMP
+      };
+
+      patientRef.set(data)
+        .then(function () {
+          clearError();
+        })
+        .catch(function (error) {
+          showError("Failed to write data: " + error.message);
+        });
+    }
+
+    // ============================================================
+    // Update the local UI
+    // ============================================================
+    function updateUI(readings, alertFlag) {
+      edaEl.textContent = readings.eda.toFixed(1);
+      bvmEl.textContent = readings.bvm;
+      roomTempEl.textContent = readings.roomTemp.toFixed(1);
+      roomHumidityEl.textContent = readings.roomHumidity;
+      envTempEl.textContent = readings.envTemp.toFixed(1);
+      envHumidityEl.textContent = readings.envHumidity;
+
+      if (alertFlag) {
+        alertEl.textContent = "YES — High Risk Condition!";
+        alertEl.className = "alert-on";
+      } else {
+        alertEl.textContent = "No — Normal";
+        alertEl.className = "alert-off";
+      }
+
+      lastUpdatedEl.textContent = new Date().toLocaleTimeString();
+
+      var batteryRounded = Math.round(batteryLevel);
+      batteryEl.textContent = batteryRounded + "%";
+      batteryEl.className = batteryRounded <= 20 ? "battery-low" : "battery-ok";
+
+      if (wristbandConnected) {
+        wristbandStatusEl.textContent = "Connected";
+        wristbandStatusEl.className = "wristband-on";
+        toggleWristbandBtn.textContent = "⌚ Disconnect Wristband (Wristband is off)";
+        toggleWristbandBtn.style.background = "#f57c00";
+      } else {
+        wristbandStatusEl.textContent = "Disconnected (Off Wrist)";
+        wristbandStatusEl.className = "wristband-off";
+        toggleWristbandBtn.textContent = "⌚ Reconnect Wristband";
+        toggleWristbandBtn.style.background = "#999";
+      }
+    }
+
+    // ============================================================
+    // Main Simulation Loop
+    // ============================================================
+    function tick() {
+      if (appCrashed) return;
+
+      simulateBattery();
+
+      var currentReadings = {
+        eda: currentEda,
+        bvm: currentBvm,
+        roomTemp: currentRoomTemp,
+        roomHumidity: currentRoomHumidity,
+        envTemp: currentEnvTemp,
+        envHumidity: currentEnvHumidity
+      };
+
+      if (!wristbandConnected || batteryLevel <= 0) {
+        updateUI(currentReadings, false);
+        return;
+      }
+
+      var readings = simulateReadings();
+
+      var alertFlag;
+      if (forceAlertActive) {
+        alertFlag = true;
+        forceAlertActive = false;
+      } else {
+        alertFlag = checkAlert(readings.eda, readings.envTemp);
+      }
+
+      updateUI(readings, alertFlag);
+      writeToFirebase(readings, alertFlag);
+    }
+
+    // Start simulation loop
+    tickIntervalId = setInterval(tick, 3000);
+    tick();
+
+    // ============================================================
+    // Force Alert Button
+    // ============================================================
+    forceAlertBtn.addEventListener("click", function () {
+      if (appCrashed) return;
+      forceAlertActive = true;
+      var currentReadings = {
+        eda: currentEda,
+        bvm: currentBvm,
+        roomTemp: currentRoomTemp,
+        roomHumidity: currentRoomHumidity,
+        envTemp: currentEnvTemp,
+        envHumidity: currentEnvHumidity
+      };
+      updateUI(currentReadings, true);
+      writeToFirebase(currentReadings, true);
+    });
+
+    // ============================================================
+    // Demo Controls
+    // ============================================================
+    toggleWristbandBtn.addEventListener("click", function () {
+      if (appCrashed) return;
+      wristbandConnected = !wristbandConnected;
+
+      var currentReadings = {
+        eda: currentEda,
+        bvm: currentBvm,
+        roomTemp: currentRoomTemp,
+        roomHumidity: currentRoomHumidity,
+        envTemp: currentEnvTemp,
+        envHumidity: currentEnvHumidity
+      };
+
+      if (wristbandConnected) {
+        var readings = simulateReadings();
+        var alertFlag = checkAlert(readings.eda, readings.envTemp);
+        updateUI(readings, alertFlag);
+        writeToFirebase(readings, alertFlag);
+      } else {
+        var data = {
+          eda: currentEda,
+          bvm: currentBvm,
+          roomTemp: currentRoomTemp,
+          roomHumidity: currentRoomHumidity,
+          envTemp: currentEnvTemp,
+          envHumidity: currentEnvHumidity,
+          alert: false,
+          batteryLevel: Math.round(batteryLevel),
+          watchConnected: false,
+          lastUpdated: firebase.database.ServerValue.TIMESTAMP
+        };
+        patientRef.set(data);
+        updateUI(currentReadings, false);
+      }
+    });
+
+    drainBatteryBtn.addEventListener("click", function () {
+      if (appCrashed) return;
+      batteryLevel = 5;
+      tick();
+    });
+
+    resetBatteryBtn.addEventListener("click", function () {
+      if (appCrashed) return;
+      batteryLevel = 100;
+      tick();
+    });
+
+    crashAppBtn.addEventListener("click", function () {
+      appCrashed = true;
+      clearInterval(tickIntervalId);
+      appStatusRow.style.display = "block";
+      crashAppBtn.disabled = true;
+      crashAppBtn.textContent = "💥 App Crashed / Frozen";
+      crashAppBtn.style.background = "#555";
+      toggleWristbandBtn.disabled = true;
+      drainBatteryBtn.disabled = true;
+      resetBatteryBtn.disabled = true;
+      forceAlertBtn.disabled = true;
+    });
+  </script>
+</body>
+</html>
